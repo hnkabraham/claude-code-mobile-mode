@@ -12,9 +12,10 @@ With it on, a turn ends with something you can tap:
 - **Tappable options.** When the next step is genuinely your call, it goes out as
   `AskUserQuestion`, which renders as chips in Remote Control, instead of as a
   paragraph you'd have to answer by thumb-typing.
-- **A push every turn.** One line, leading with the result, so nothing lands
-  silently while you're away from the screen. Claude Code drops it on its own
-  when the terminal is active, so it costs nothing at the desk.
+- **A push every turn**, or only when something needs you: your call. One line,
+  leading with the result, so nothing lands silently while you're away from the
+  screen. Claude Code drops it on its own when the terminal is active, so it
+  costs nothing at the desk.
 - **Output written for a phone screen.** Answer first, no preamble.
 
 ## Install
@@ -45,12 +46,21 @@ Bash, which Claude Code already uses to run hooks; the launcher also knows that
 /mobile-mode:toggle relax     # back to guidance only (same as `on`)
 /mobile-mode:toggle off
 /mobile-mode:toggle status
+
+/mobile-mode:toggle on needed    # push only when the turn ends with something to act on
+/mobile-mode:toggle push never   # no pushes at all; keeps the current mode
 ```
 
 Flip it on when you pick up your phone, off when you sit back down. It applies
 to **the session you run it in** and no other. Hooks read the switch at fire
 time, so it takes effect on the next turn — no restart. Transitions are
 absolute: `on` always means guidance-only, even if `enforce` was set before.
+
+The push cadence sits on top of the mode: `always` (default) pushes one line
+every turn, `needed` only when the turn ends with something you'd act on,
+`never` not at all. Give it as a second word on `on`/`enforce`/`relax`, or on
+its own as `push <cadence>`. Once set it is remembered for the rest of the
+session, including across `off`.
 
 ## How it works
 

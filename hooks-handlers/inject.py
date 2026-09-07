@@ -24,7 +24,35 @@ import mobile_mode_state as state  # noqa: E402
 
 TOGGLE_COMMAND = "/mobile-mode:toggle"
 
-GUIDANCE = """\
+PUSH_ITEMS = {
+    "always": """\
+2. PUSH ONE LINE EVERY TURN. If the PushNotification tool is available, call
+   it once per turn, every turn -- the user has opted in to a push for every
+   reply, short answers included, and that overrides the tool's own "err
+   toward not sending" default. Send it right before you wait on a question,
+   or as the last thing before the turn ends. Lead with the thing itself:
+   "auth tests failing, 2 of 14" beats "task complete", and for a plain answer
+   put the answer in the line. Do not push again if you are continuing after
+   a stop-hook nudge.""",
+    "needed": """\
+2. PUSH ONE LINE WHEN THEY NEED TO LOOK. If the PushNotification tool is
+   available, call it once per turn: right before you wait on a question, or
+   when the turn ends with something they would act on. Lead with the thing
+   itself -- "auth tests failing, 2 of 14" beats "task complete". Do not push
+   again if you are continuing after a stop-hook nudge.""",
+    "never": """\
+2. DO NOT PUSH. Never call PushNotification in this session, even if the tool
+   is offered: the user has turned pushes off for mobile mode and is notified
+   another way.""",
+}
+
+PUSH_TAILS = {
+    "always": "; push only if something changed that they would want to know about.",
+    "needed": "; push only if something changed that they would want to know about.",
+    "never": " and do not push.",
+}
+
+GUIDANCE_TEMPLATE = """\
 <mobile-mode>
 Mobile mode is on for this session: the user is driving it from their phone,
 away from the terminal. Reading is cheap for them, typing is expensive, tapping
@@ -37,22 +65,24 @@ is free.
    just end. Never manufacture a question: one whose answer would not change
    what you do next is worse than none.
 
-2. PUSH ONE LINE EVERY TURN. If the PushNotification tool is available, call
-   it once per turn, every turn -- the user has opted in to a push for every
-   reply, short answers included, and that overrides the tool's own "err
-   toward not sending" default. Send it right before you wait on a question,
-   or as the last thing before the turn ends. Lead with the thing itself:
-   "auth tests failing, 2 of 14" beats "task complete", and for a plain answer
-   put the answer in the line. Do not push again if you are continuing after
-   a stop-hook nudge.
+{push_item}
 
 3. WRITE FOR A PHONE SCREEN. Lead with the answer. Cut the preamble. Long
    tables and wide code blocks do not survive the trip.
 
 If this turn was started by a scheduled wakeup or a background task rather
-than by the user, skip the question; push only if something changed that they
-would want to know about.
+than by the user, skip the question{push_tail}
 </mobile-mode>"""
+
+
+def guidance(push: str = state.DEFAULT_PUSH) -> str:
+    """The guidance text for one push cadence ("always", "needed", "never")."""
+    if push not in PUSH_ITEMS:
+        push = state.DEFAULT_PUSH
+    return GUIDANCE_TEMPLATE.format(push_item=PUSH_ITEMS[push], push_tail=PUSH_TAILS[push])
+
+
+GUIDANCE = guidance()  # the default cadence, kept under its old name
 
 RETRACTION = """\
 <mobile-mode>
@@ -81,12 +111,16 @@ def decide(event: dict) -> str:
     session_id = event.get("session_id")
     record = state.load(session_id)
     if record.get("mode") in ("on", "enforce"):
-        return GUIDANCE
+        return guidance(state.push_cadence(record))
 
     if record.get("retract_pending"):
-        # One-shot: clear the flag first so a retraction cannot repeat.
+        # One-shot: clear the flag first so a retraction cannot repeat. A
+        # remembered push cadence keeps the record alive; otherwise drop it.
         try:
-            state.remove(session_id)
+            if "push" in record:
+                state.save(session_id, {"mode": "off", "push": record["push"]})
+            else:
+                state.remove(session_id)
         except OSError:
             try:
                 state.save(session_id, {"mode": "off"})

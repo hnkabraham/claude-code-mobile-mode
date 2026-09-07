@@ -716,3 +716,115 @@ def test_launcher_has_unix_line_endings():
     # A CRLF run.sh breaks sh on every platform; .gitattributes pins it to LF.
     assert b"\r" not in (REPO / "run.sh").read_bytes()
     assert "*.sh text eol=lf" in (REPO / ".gitattributes").read_text(encoding="utf-8")
+
+
+# --------------------------------------------------------------------------- push cadence
+
+def tog(*words):
+    return toggle.main(["--session", SID, "--", *words])
+
+
+def test_cadence_defaults_to_always(home, capsys):
+    assert tog("on") == 0
+    assert state.load(SID) == {"mode": "on"}
+    assert state.push_cadence(state.load(SID)) == "always"
+    assert "push every turn" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("cadence,words", [
+    ("always", "push every turn"), ("needed", "push when needed"), ("never", "no push"),
+])
+def test_on_with_cadence(home, capsys, cadence, words):
+    assert tog("on", cadence) == 0
+    assert state.load(SID) == {"mode": "on", "push": cadence}
+    assert words in capsys.readouterr().out
+
+
+def test_push_action_changes_cadence_and_keeps_mode(home):
+    tog("enforce")
+    state.save(SID, {"mode": "enforce"})  # pass consumed by a Stop
+    assert tog("push", "needed") == 0
+    assert state.load(SID) == {"mode": "enforce", "push": "needed", "skip_next_stop": True}
+
+
+def test_push_action_turns_mode_on_when_off(home):
+    assert tog("push", "never") == 0
+    assert state.load(SID) == {"mode": "on", "push": "never"}
+
+
+def test_cadence_is_remembered_across_mode_changes_and_off(home):
+    tog("on", "needed")
+    tog("enforce")
+    assert state.load(SID) == {"mode": "enforce", "push": "needed", "skip_next_stop": True}
+    tog("relax")
+    assert state.load(SID) == {"mode": "on", "push": "needed"}
+    tog("off")
+    assert state.load(SID) == {"mode": "off", "retract_pending": True, "push": "needed"}
+    assert inject.decide({"session_id": SID, "prompt": "next"}) == inject.RETRACTION
+    assert state.load(SID) == {"mode": "off", "push": "needed"}, "record lingers to carry the cadence"
+    assert inject.decide({"session_id": SID, "prompt": "again"}) == ""
+    tog("off")
+    assert state.load(SID) == {"mode": "off", "push": "needed"}
+    tog("on")
+    assert state.load(SID) == {"mode": "on", "push": "needed"}
+    tog("on", "always")
+    assert state.load(SID) == {"mode": "on", "push": "always"}
+
+
+def test_double_off_keeps_the_pending_retraction(home):
+    tog("on")
+    tog("off")
+    tog("off")
+    assert state.load(SID) == {"mode": "off", "retract_pending": True}
+
+
+@pytest.mark.parametrize("argv", [
+    ["push"], ["push", "sometimes"], ["on", "sometimes"], ["off", "needed"],
+    ["status", "always"], ["on", "needed", "now"],
+])
+def test_bad_cadence_is_a_usage_error(home, argv):
+    assert tog(*argv) == toggle.EX_USAGE
+    assert not os.path.exists(state.sessions_dir())
+
+
+def test_unknown_cadence_on_disk_reads_as_default(home):
+    state.save(SID, {"mode": "on"})
+    with open(state.record_path(SID), "w", encoding="utf-8") as fh:
+        json.dump({"mode": "on", "push": "bogus"}, fh)
+    assert state.load(SID) == {"mode": "on"}
+    assert inject.decide({"session_id": SID, "prompt": "hi"}) == inject.GUIDANCE
+
+
+def test_save_rejects_an_unknown_cadence(home):
+    with pytest.raises(ValueError):
+        state.save(SID, {"mode": "on", "push": "bogus"})
+
+
+def test_inject_guidance_follows_cadence(home):
+    tog("on", "always")
+    assert inject.decide({"session_id": SID, "prompt": "hi"}) == inject.GUIDANCE
+    assert "EVERY TURN" in inject.GUIDANCE
+    tog("push", "needed")
+    g = inject.decide({"session_id": SID, "prompt": "hi"})
+    assert "WHEN THEY NEED TO LOOK" in g and "EVERY TURN" not in g
+    tog("push", "never")
+    g = inject.decide({"session_id": SID, "prompt": "hi"})
+    assert "DO NOT PUSH" in g and g.rstrip().endswith("do not push.\n</mobile-mode>")
+    assert "PushNotification tool is" not in g
+    assert "1. ASK ONLY" in g and "3. WRITE FOR A PHONE SCREEN" in g
+
+
+def test_guidance_variants_are_fully_rendered():
+    for cadence in state.PUSH:
+        g = inject.guidance(cadence)
+        assert g.startswith("<mobile-mode>") and g.endswith("</mobile-mode>")
+        assert "{" not in g and "}" not in g
+    assert inject.guidance("bogus") == inject.GUIDANCE
+
+
+@needs_sh
+def test_launcher_runs_cadence_words(home):
+    r = run([SH, str(REPO / "run.sh"), "toggle", "--session", SID, "--", "on", "needed"])
+    assert r.returncode == 0 and "push when needed" in r.stdout, r.stderr
+    r = run([SH, str(REPO / "run.sh"), "toggle", "--session", SID, "--", "push", "sometimes"])
+    assert r.returncode == toggle.EX_USAGE

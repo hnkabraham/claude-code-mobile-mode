@@ -1,7 +1,7 @@
 {
   "$schema": "https://anthropic.com/claude-code/plugin.schema.json",
   "name": "mobile-mode",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "description": "Phone-driven sessions end each turn with tappable AskUserQuestion options and a push notification, injected per-turn and scoped to the session you toggle it in.",
   "keywords": [
     "mobile",

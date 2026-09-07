@@ -37,6 +37,15 @@ absolute: `on` always means guidance-only (it clears `enforce`), `enforce` alway
 means guidance + Stop-hook blocking, `relax` is the same as `on`, `off` clears
 everything. Takes effect on the next turn — no restart.
 
+The push cadence is a preference on top of the mode, stored as `push` in the
+same record: `always` (default) asks for one push every turn, `needed` only
+when the turn ends with something to act on, `never` tells the model not to
+push at all. Set it with a second word (`on needed`, `enforce always`) or on
+its own with `push <cadence>`, which also turns the mode on if it was off. It
+is remembered for the rest of the session, across mode changes and `off` — a
+record with mode `off` may linger just to carry it. Each cadence swaps item 2
+of the guidance; the rest is identical.
+
 Turning it `off` also queues a one-time retraction for the next turn, telling
 the model that the earlier `<mobile-mode>` guidance still sitting in the
 conversation no longer applies.
