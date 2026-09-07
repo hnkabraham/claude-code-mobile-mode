@@ -1,19 +1,13 @@
 {
   "$schema": "https://anthropic.com/claude-code/plugin.schema.json",
   "name": "mobile-mode",
-  "version": "0.1.0",
-  "description": "Phone-driven sessions end each turn with tappable AskUserQuestion options and a push notification, injected per-turn behind a flag file.",
-  "skills": [
-    "./"
-  ],
+  "version": "0.2.0",
+  "description": "Phone-driven sessions end each turn with tappable AskUserQuestion options and a push notification, injected per-turn and scoped to the session you toggle it in.",
   "keywords": [
     "mobile",
     "remote-control",
     "notifications",
     "hooks"
-  ],
-  "commands": [
-    "./commands"
   ],
   "author": {
     "name": "Henok Abraham"

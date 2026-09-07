@@ -3,15 +3,16 @@
 A Claude Code plugin for people who drive sessions from their phone.
 
 When you're on mobile, reading is cheap, typing is expensive, and tapping is free.
-Claude Code doesn't know that. `mobile-mode` tells it — per turn, behind a switch,
-so nothing changes when you're back at the terminal.
+Claude Code doesn't know that. `mobile-mode` tells it — per turn, behind a
+per-session switch, so nothing changes when you're back at the terminal and
+nothing changes in the *other* sessions running on the same machine.
 
 With it on, a turn ends with something you can tap:
 
-- **Tappable options.** Real next steps go out as `AskUserQuestion`, which renders
-  as chips in Remote Control, instead of as a paragraph you'd have to answer by
-  thumb-typing.
-- **A push when the turn ends.** One line, leading with what you'd act on.
+- **Tappable options.** When the next step is genuinely your call, it goes out as
+  `AskUserQuestion`, which renders as chips in Remote Control, instead of as a
+  paragraph you'd have to answer by thumb-typing.
+- **A push when you need to look.** One line, leading with what you'd act on.
 - **Output written for a phone screen.** Answer first, no preamble.
 
 ## Install
@@ -21,55 +22,71 @@ With it on, a turn ends with something you can tap:
 /plugin install mobile-mode
 ```
 
-Or clone straight into your skills directory, which auto-loads it:
+Or clone straight into your skills directory, which loads it as a plugin
+(hooks included) on the next session:
 
 ```bash
 git clone https://github.com/holystreetballer/claude-code-mobile-mode ~/.claude/skills/mobile-mode
 ```
 
-Requires `python3` (stdlib only — no dependencies) and Claude Code 2.1.x or newer.
+Requires Claude Code 2.1.157 or newer, a Python 3.8+ somewhere on `PATH`
+(stdlib only — no dependencies), and a POSIX `sh`. On Windows that means Git
+Bash, which Claude Code already uses to run hooks; the launcher also knows that
+`python3` there is usually the Microsoft Store stub and tries `py -3` and
+`python` instead.
 
 ## Use
 
 ```
 /mobile-mode:toggle on        # guidance only — the sane default
 /mobile-mode:toggle enforce   # also let the Stop hook block an optionless turn
-/mobile-mode:toggle relax     # back to guidance only
+/mobile-mode:toggle relax     # back to guidance only (same as `on`)
 /mobile-mode:toggle off
 /mobile-mode:toggle status
 ```
 
-Flip it on when you pick up your phone, off when you sit back down. Hooks read the
-switch at fire time, so it takes effect on the next turn — no restart.
+Flip it on when you pick up your phone, off when you sit back down. It applies
+to **the session you run it in** and no other. Hooks read the switch at fire
+time, so it takes effect on the next turn — no restart. Transitions are
+absolute: `on` always means guidance-only, even if `enforce` was set before.
 
 ## How it works
 
-Two hooks and a flag file.
+Two hooks, a launcher, and one small state file per session.
 
 | | Event | Job |
 |---|---|---|
+| `run.sh` | — | finds a working Python 3 and runs one handler under it |
 | `hooks-handlers/inject.py` | `UserPromptSubmit` | returns `hookSpecificOutput.additionalContext` carrying the mobile guidance |
-| `hooks-handlers/enforce.py` | `Stop` | *opt-in*; blocks a turn that ended without `AskUserQuestion` |
+| `hooks-handlers/enforce.py` | `Stop` | *opt-in*; blocks a turn that ended without `AskUserQuestion`, at most once per turn |
+| `hooks-handlers/toggle.py` | — | backend for `/mobile-mode:toggle` |
 
 The guidance is attached to each **message**, not to the session. That's the whole
 trick: it costs nothing on turns where mobile mode is off, and it can be flipped
 mid-session without restarting anything.
 
-Everything is gated on `~/.claude/.mobile-mode` existing. Every failure path —
-missing flag, unreadable transcript, malformed stdin — prints `{}` and lets the
-turn through untouched. A hook that breaks your session is worse than a missing
-nudge.
+Everything is gated on `~/.claude/mobile-mode/sessions/<session-id>.json`. The
+slash command learns the session id from Claude Code's `${CLAUDE_SESSION_ID}`
+substitution; the hooks get the same id on stdin. Every failure path — no state,
+unreadable transcript, malformed stdin — prints `{}` and lets the turn through
+untouched. A hook that breaks your session is worse than a missing nudge.
 
-## Why a flag file instead of detecting your phone
+Turning it `off` also hands the model a one-line retraction on the next turn, so
+the guidance already sitting in the conversation stops applying instead of
+quietly lingering.
+
+## Why a per-session switch instead of detecting your phone
 
 Because it can't be detected. A hook receives no indication of where a prompt came
 from: there's no origin field in its stdin JSON, and no environment marker for a
 local session being driven by Remote Control (`CLAUDE_CODE_REMOTE*` refers to cloud
 sessions, which is a different thing).
 
-That turns out to be a feature. An explicit switch means unattended sessions —
-chat-channel bridges, cron jobs, anything running without a human watching — never
-pick this up, which a `CLAUDE.md` instruction could not have guaranteed.
+And a machine-wide switch would be worse than nothing. The moment you flipped it
+on from your phone, every unattended session on that box — a chat-channel bridge,
+a cron job, a scheduled monitoring loop — would start firing push notifications
+at nobody and ending its turns with questions nobody will tap. Keying the switch
+on the session id means only the session you toggled changes.
 
 ## On enforcement
 
@@ -80,9 +97,24 @@ didn't. "The model got lazy" and "the work is genuinely finished" look identical
 from the outside. Try the guidance alone first; reach for `enforce` only if the
 prompt proves too loose in practice.
 
+It is best-effort by construction: it blocks at most once per turn (Claude Code
+marks the retry with `stop_hook_active`, which always passes), a cancelled or
+timed-out question does not count as one, the toggle's own turn gets a free
+pass, and any doubt about the transcript — missing, empty, unreadable —
+resolves to letting the turn end.
+
 The guidance itself is deliberately hedged: it tells the model that a question
 whose answer wouldn't change what it does next is worse than no question at all.
 Turn-ending options are only worth anything when they represent a real decision.
+
+## Known limit
+
+A scheduled wakeup or background task that fires *inside the session you
+toggled* is indistinguishable from you. Those turns get the guidance too. The
+guidance tells the model to skip the question on such turns and push only when
+something changed; in `enforce` mode each one costs at most one extra
+"nothing to ask" round-trip. If you run long unattended loops, run them in
+their own session and leave mobile mode off there.
 
 ## Prior art
 
@@ -95,6 +127,16 @@ buttons (`parseMarkdownBlock.ts:117`).
 The one change is `AskUserQuestion` in place of the XML round-trip. Happy had to
 invent a tag and parse it because it controls its own client; a plugin doesn't, and
 `AskUserQuestion` already renders as tappable chips with nothing to parse.
+
+## Development
+
+```bash
+python -m pytest -q
+```
+
+The suite runs the handlers the way Claude Code does — through `sh run.sh` and
+through the exact command strings in `hooks/hooks.json` — so it needs a POSIX
+`sh` on `PATH` (Git Bash on Windows).
 
 ## License
 

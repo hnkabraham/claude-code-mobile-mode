@@ -1,12 +1,14 @@
 ---
-description: Turn mobile mode on or off (tappable options + push after every turn)
+description: Turn mobile mode on or off for this session (tappable options + a push after each turn)
 argument-hint: on | off | enforce | relax | status
-allowed-tools: Bash(bash:*)
+disable-model-invocation: true
+allowed-tools: Bash(sh:*)
 ---
 
-Mobile mode switch. Result of running the toggle:
+Mobile mode switch for this session. Result of running it:
 
-!`bash ~/.claude/skills/mobile-mode/toggle.sh $ARGUMENTS`
+!`sh "${CLAUDE_PLUGIN_ROOT}/run.sh" toggle --session "${CLAUDE_SESSION_ID}" -- $ARGUMENTS`
 
-Report that line back to the user verbatim and stop. Do not explain the modes
-unless asked — if the toggle printed a status, they already know what they got.
+Report the result line above to the user verbatim and stop. Do not explain the
+modes unless asked. Do not call AskUserQuestion or PushNotification for this
+reply -- it is the switch, not a turn worth a tap.
