@@ -1,6 +1,6 @@
 ---
 description: Turn mobile mode on or off for this session (tappable options + a push each turn), or set its push cadence
-argument-hint: on | enforce | relax [always|needed|never] | push <always|needed|never> | off | status
+argument-hint: on | enforce | relax [always|needed|never] | push <always|needed|never> | suggest <on|off> | off | status
 disable-model-invocation: true
 allowed-tools: Bash(sh:*)
 ---

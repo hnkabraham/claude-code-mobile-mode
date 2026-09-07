@@ -21,6 +21,11 @@ ends with something to act on, "never" not at all. It is a preference, not a
 mode, so it survives on/enforce/relax/off within the session; a record with
 mode "off" may linger just to remember it.
 
+Suggestions (record["suggest"], default off): when True, the guidance asks the
+model to end even a finished turn with an AskUserQuestion offering next-step
+prompts to tap. Like the push cadence it is a remembered preference, carried
+across mode changes and off.
+
 Writes are atomic (temp file + os.replace). Records older than
 PRUNE_AFTER_DAYS are removed opportunistically on every write, so abandoned
 sessions do not accumulate.
@@ -85,6 +90,8 @@ def load(session_id) -> dict:
         return dict(OFF)
     if "push" in data and data["push"] not in PUSH:
         data.pop("push")  # unknown cadence reads as the default, never as a fault
+    if "suggest" in data and not isinstance(data["suggest"], bool):
+        data.pop("suggest")  # only a real bool counts; anything else means off
     return data
 
 
@@ -92,6 +99,11 @@ def push_cadence(record: dict) -> str:
     """The record's push cadence, defaulting when absent or unrecognised."""
     cadence = record.get("push") if isinstance(record, dict) else None
     return cadence if cadence in PUSH else DEFAULT_PUSH
+
+
+def suggest_on(record: dict) -> bool:
+    """Whether the record opts in to end-of-turn next-step suggestions."""
+    return bool(record.get("suggest")) if isinstance(record, dict) else False
 
 
 def mode(session_id) -> str:
@@ -104,6 +116,8 @@ def save(session_id, record: dict) -> None:
         raise ValueError("record.mode must be one of %s" % (MODES,))
     if "push" in record and record["push"] not in PUSH:
         raise ValueError("record.push must be one of %s" % (PUSH,))
+    if "suggest" in record and not isinstance(record["suggest"], bool):
+        raise ValueError("record.suggest must be a bool")
     path = record_path(session_id)
     directory = os.path.dirname(path)
     os.makedirs(directory, exist_ok=True)

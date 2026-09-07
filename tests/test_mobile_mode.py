@@ -828,3 +828,114 @@ def test_launcher_runs_cadence_words(home):
     assert r.returncode == 0 and "push when needed" in r.stdout, r.stderr
     r = run([SH, str(REPO / "run.sh"), "toggle", "--session", SID, "--", "push", "sometimes"])
     assert r.returncode == toggle.EX_USAGE
+
+
+# --------------------------------------------------------------------------- suggestions
+
+def test_suggest_on_sets_the_flag(home, capsys):
+    assert tog("suggest", "on") == 0
+    assert state.load(SID) == {"mode": "on", "suggest": True}
+    assert "suggests next steps" in capsys.readouterr().out
+
+
+def test_suggest_on_turns_mode_on_when_off(home):
+    assert tog("suggest", "on") == 0
+    assert state.load(SID) == {"mode": "on", "suggest": True}
+
+
+def test_suggest_off_removes_the_flag_and_keeps_mode(home):
+    tog("enforce")
+    state.save(SID, {"mode": "enforce", "suggest": True})  # pass consumed by a Stop
+    assert tog("suggest", "off") == 0
+    assert state.load(SID) == {"mode": "enforce", "skip_next_stop": True}
+
+
+def test_suggest_defaults_off(home, capsys):
+    tog("on")
+    capsys.readouterr()
+    assert state.suggest_on(state.load(SID)) is False
+    tog("status")
+    assert "suggests next steps" not in capsys.readouterr().out
+
+
+def test_suggest_and_cadence_compose(home, capsys):
+    tog("on", "needed")
+    tog("suggest", "on")
+    assert state.load(SID) == {"mode": "on", "push": "needed", "suggest": True}
+    capsys.readouterr()
+    tog("status")
+    out = capsys.readouterr().out
+    assert "push when needed" in out and "suggests next steps" in out
+
+
+def test_suggest_is_remembered_across_mode_changes_and_off(home):
+    tog("suggest", "on")
+    tog("enforce")
+    assert state.load(SID) == {"mode": "enforce", "suggest": True, "skip_next_stop": True}
+    tog("relax")
+    assert state.load(SID) == {"mode": "on", "suggest": True}
+    tog("off")
+    assert state.load(SID) == {"mode": "off", "retract_pending": True, "suggest": True}
+    assert inject.decide({"session_id": SID, "prompt": "next"}) == inject.RETRACTION
+    assert state.load(SID) == {"mode": "off", "suggest": True}, "record lingers to carry suggest"
+    tog("on")
+    assert state.load(SID) == {"mode": "on", "suggest": True}
+
+
+def test_both_prefs_survive_the_retraction(home):
+    tog("on", "needed")
+    tog("suggest", "on")
+    tog("off")
+    assert state.load(SID) == {"mode": "off", "retract_pending": True, "push": "needed", "suggest": True}
+    assert inject.decide({"session_id": SID, "prompt": "next"}) == inject.RETRACTION
+    assert state.load(SID) == {"mode": "off", "push": "needed", "suggest": True}
+
+
+@pytest.mark.parametrize("argv", [
+    ["suggest"], ["suggest", "yes"], ["suggest", "always"], ["on", "suggest"],
+    ["suggest", "on", "off"],
+])
+def test_bad_suggest_is_a_usage_error(home, argv):
+    assert tog(*argv) == toggle.EX_USAGE
+    assert not os.path.exists(state.sessions_dir())
+
+
+def test_save_rejects_a_non_bool_suggest(home):
+    with pytest.raises(ValueError):
+        state.save(SID, {"mode": "on", "suggest": "yes"})
+
+
+def test_non_bool_suggest_on_disk_reads_as_off(home):
+    state.save(SID, {"mode": "on"})
+    with open(state.record_path(SID), "w", encoding="utf-8") as fh:
+        json.dump({"mode": "on", "suggest": "yes"}, fh)
+    assert state.load(SID) == {"mode": "on"}
+    assert inject.decide({"session_id": SID, "prompt": "hi"}) == inject.GUIDANCE
+
+
+def test_inject_guidance_follows_suggest(home):
+    tog("on")
+    plain = inject.decide({"session_id": SID, "prompt": "hi"})
+    assert plain == inject.GUIDANCE
+    assert "just end" in plain and "next steps" not in plain
+    tog("suggest", "on")
+    g = inject.decide({"session_id": SID, "prompt": "hi"})
+    assert "2-4 concrete next steps" in g and "just end" not in g
+    assert "1. ASK ONLY" in g and "3. WRITE FOR A PHONE SCREEN" in g
+
+
+def test_guidance_all_combinations_render(home):
+    for push in state.PUSH:
+        for suggest in (False, True):
+            g = inject.guidance(push, suggest)
+            assert g.startswith("<mobile-mode>") and g.endswith("</mobile-mode>")
+            assert "{" not in g and "}" not in g
+    assert inject.guidance(state.DEFAULT_PUSH, False) == inject.GUIDANCE
+
+
+@needs_sh
+def test_launcher_runs_suggest_words(home):
+    r = run([SH, str(REPO / "run.sh"), "toggle", "--session", SID, "--", "suggest", "on"])
+    assert r.returncode == 0 and "suggests next steps" in r.stdout, r.stderr
+    r = run([SH, str(REPO / "run.sh"), "toggle", "--session", SID, "--", "suggest", "maybe"])
+    assert r.returncode == toggle.EX_USAGE

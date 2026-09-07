@@ -46,6 +46,15 @@ is remembered for the rest of the session, across mode changes and `off` — a
 record with mode `off` may linger just to carry it. Each cadence swaps item 2
 of the guidance; the rest is identical.
 
+Suggestions are a second preference, stored as `suggest` (a bool, default off).
+With `suggest on`, item 1 of the guidance changes: instead of "a finished turn
+just ends", the model is told to end even a completed turn with an
+`AskUserQuestion` of 2–4 next-step prompts to tap (a real decision still comes
+first when one exists). Set it with `suggest on` / `suggest off`; like the push
+cadence it turns the mode on if it was off and is remembered across mode
+changes and `off`. `enforce` composes naturally with it — a turn that always
+offers suggestions never trips the Stop hook.
+
 Turning it `off` also queues a one-time retraction for the next turn, telling
 the model that the earlier `<mobile-mode>` guidance still sitting in the
 conversation no longer applies.

@@ -49,6 +49,7 @@ Bash, which Claude Code already uses to run hooks; the launcher also knows that
 
 /mobile-mode:toggle on needed    # push only when the turn ends with something to act on
 /mobile-mode:toggle push never   # no pushes at all; keeps the current mode
+/mobile-mode:toggle suggest on   # end each turn with tappable next-step prompts
 ```
 
 Flip it on when you pick up your phone, off when you sit back down. It applies
@@ -61,6 +62,13 @@ every turn, `needed` only when the turn ends with something you'd act on,
 `never` not at all. Give it as a second word on `on`/`enforce`/`relax`, or on
 its own as `push <cadence>`. Once set it is remembered for the rest of the
 session, including across `off`.
+
+Suggestions are a second opt-in preference, off by default. With `suggest on`,
+a turn that finishes the work ends with an `AskUserQuestion` offering a few
+next-step prompts to tap, instead of just stopping — the same "what next?"
+feel some standalone phone clients have. A real decision still comes first when
+there is one. It is remembered like the push cadence, and `suggest off` turns
+it back off.
 
 ## How it works
 

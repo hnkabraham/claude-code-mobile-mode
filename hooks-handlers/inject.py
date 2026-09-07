@@ -52,6 +52,22 @@ PUSH_TAILS = {
     "never": " and do not push.",
 }
 
+END_CLAUSES = {
+    False: (
+        "A turn that finishes the work should\n"
+        "   just end. Never manufacture a question: one whose answer would not\n"
+        "   change what you do next is worse than none."
+    ),
+    True: (
+        "Never manufacture a decision that isn't\n"
+        "   real. But when the work is finished and nothing needs the user's input,\n"
+        "   still end by calling AskUserQuestion with 2-4 concrete next steps,\n"
+        "   phrased as prompts they could pick up next, so they tap instead of\n"
+        "   type. Make them distinct and genuinely useful -- a suggestion they\n"
+        "   would never choose is noise."
+    ),
+}
+
 GUIDANCE_TEMPLATE = """\
 <mobile-mode>
 Mobile mode is on for this session: the user is driving it from their phone,
@@ -61,9 +77,7 @@ is free.
 1. ASK ONLY WHEN THE NEXT ACTION NEEDS THEIR DECISION -- and when it does, ask
    with AskUserQuestion so the choices render as taps instead of prose they
    would have to answer by thumb-typing. Keep each option to a few words and
-   make the options genuinely different. A turn that finishes the work should
-   just end. Never manufacture a question: one whose answer would not change
-   what you do next is worse than none.
+   make the options genuinely different. {end_clause}
 
 {push_item}
 
@@ -75,14 +89,18 @@ than by the user, skip the question{push_tail}
 </mobile-mode>"""
 
 
-def guidance(push: str = state.DEFAULT_PUSH) -> str:
-    """The guidance text for one push cadence ("always", "needed", "never")."""
+def guidance(push: str = state.DEFAULT_PUSH, suggest: bool = False) -> str:
+    """The guidance text for one push cadence and suggestion preference."""
     if push not in PUSH_ITEMS:
         push = state.DEFAULT_PUSH
-    return GUIDANCE_TEMPLATE.format(push_item=PUSH_ITEMS[push], push_tail=PUSH_TAILS[push])
+    return GUIDANCE_TEMPLATE.format(
+        end_clause=END_CLAUSES[bool(suggest)],
+        push_item=PUSH_ITEMS[push],
+        push_tail=PUSH_TAILS[push],
+    )
 
 
-GUIDANCE = guidance()  # the default cadence, kept under its old name
+GUIDANCE = guidance()  # the default cadence + no suggestions, kept under its old name
 
 RETRACTION = """\
 <mobile-mode>
@@ -111,14 +129,16 @@ def decide(event: dict) -> str:
     session_id = event.get("session_id")
     record = state.load(session_id)
     if record.get("mode") in ("on", "enforce"):
-        return guidance(state.push_cadence(record))
+        return guidance(state.push_cadence(record), state.suggest_on(record))
 
     if record.get("retract_pending"):
-        # One-shot: clear the flag first so a retraction cannot repeat. A
-        # remembered push cadence keeps the record alive; otherwise drop it.
+        # One-shot: clear the flag first so a retraction cannot repeat. Any
+        # remembered preference (push, suggest) keeps the record alive so it
+        # survives the retraction; with none to keep, drop the record.
         try:
-            if "push" in record:
-                state.save(session_id, {"mode": "off", "push": record["push"]})
+            prefs = {k: record[k] for k in ("push", "suggest") if k in record}
+            if prefs:
+                state.save(session_id, {"mode": "off", **prefs})
             else:
                 state.remove(session_id)
         except OSError:

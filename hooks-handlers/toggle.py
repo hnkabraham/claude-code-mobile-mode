@@ -2,7 +2,8 @@
 """Backend for /mobile-mode:toggle -- set THIS session's mobile mode.
 
     toggle.py --session <id> -- [on|enforce|relax [always|needed|never]
-                                 | push always|needed|never | off | status]
+                                 | push always|needed|never
+                                 | suggest on|off | off | status]
 
 Mode transitions are absolute, not relative, so the result of a command never
 depends on what was set before:
@@ -14,12 +15,18 @@ depends on what was set before:
                            the next turn so the model knows to stop
     status   -> no change
 
-The push cadence is a preference layered on the mode. `on needed` sets both;
-`push needed` changes only the cadence (and turns the mode on if it was off).
-A cadence once set is remembered for the rest of the session -- across on,
-enforce, relax and even off -- so a record with mode "off" may linger just to
-carry it. Cadences: always (one push every turn, the default), needed (only
-when the turn ends with something to act on), never.
+Two preferences layer on top of the mode and are remembered for the rest of the
+session -- across on, enforce, relax and even off, so a record with mode "off"
+may linger just to carry them:
+
+    push <always|needed|never>   how often to send a PushNotification
+                                 (always = every turn, the default)
+    suggest <on|off>             end even a finished turn with an
+                                 AskUserQuestion of next-step prompts (off
+                                 by default)
+
+`push` and `suggest` also turn the mode on if it was off. Given as a second
+word on on/enforce/relax, a cadence sets `push` at the same time (`on needed`).
 
 Whenever the result is "enforce", the record also carries skip_next_stop=True:
 the toggle's own turn ends with nothing to ask, and the Stop hook consumes that
@@ -37,10 +44,10 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import mobile_mode_state as state  # noqa: E402
 
-ACTIONS = ("on", "off", "enforce", "relax", "status", "push")
+ACTIONS = ("on", "off", "enforce", "relax", "status", "push", "suggest")
 USAGE = (
     "usage: /mobile-mode:toggle [on|enforce|relax] [always|needed|never] "
-    "| push <always|needed|never> | off | status"
+    "| push <always|needed|never> | suggest <on|off> | off | status"
 )
 
 EX_USAGE = 64
@@ -59,13 +66,16 @@ def describe(session_id: str, record: dict) -> str:
         head = "ON (enforced - the Stop hook may block a turn that offers nothing to tap)"
     else:
         head = "ON (guidance only)"
-    return "mobile mode: %s, %s [%s]" % (head, PUSH_WORDS[state.push_cadence(record)], tag)
+    extras = PUSH_WORDS[state.push_cadence(record)]
+    if state.suggest_on(record):
+        extras += ", suggests next steps"
+    return "mobile mode: %s, %s [%s]" % (head, extras, tag)
 
 
-def apply(session_id: str, action: str, cadence: str = None) -> dict:
+def apply(session_id: str, action: str, cadence: str = None, suggest: bool = None) -> dict:
     """Perform one transition and return the resulting record."""
     before = state.load(session_id)
-    remembered = {"push": before["push"]} if "push" in before else {}
+    remembered = {k: before[k] for k in ("push", "suggest") if k in before}
 
     if action == "status":
         record = dict(before)
@@ -73,7 +83,7 @@ def apply(session_id: str, action: str, cadence: str = None) -> dict:
         record = {"mode": "on"}
     elif action == "enforce":
         record = {"mode": "enforce"}
-    elif action == "push":
+    elif action in ("push", "suggest"):
         record = {"mode": "on" if before["mode"] == "off" else before["mode"]}
     else:  # off
         record = {"mode": "off"}
@@ -87,6 +97,11 @@ def apply(session_id: str, action: str, cadence: str = None) -> dict:
         record.update(remembered)
         if cadence:
             record["push"] = cadence
+        if suggest is not None:
+            if suggest:
+                record["suggest"] = True
+            else:
+                record.pop("suggest", None)  # off is the absence of the key
 
     if record["mode"] == "enforce":
         # This very turn is the switch and has nothing to ask. Give the Stop
@@ -100,20 +115,32 @@ def apply(session_id: str, action: str, cadence: str = None) -> dict:
 
 
 def parse_words(words):
-    """(action, cadence) from the slash command's words, or None if malformed."""
+    """(action, cadence, suggest) from the slash command's words, or None.
+
+    None means the words are malformed and the caller should print usage.
+    """
     if len(words) > 2:
         return None
     action = words[0] if words else "status"
-    cadence = words[1] if len(words) > 1 else None
+    arg = words[1] if len(words) > 1 else None
     if action not in ACTIONS:
         return None
-    if cadence is not None and cadence not in state.PUSH:
+    if action == "suggest":
+        if arg not in ("on", "off"):
+            return None
+        return action, None, (arg == "on")
+    if action == "push":
+        if arg not in state.PUSH:
+            return None
+        return action, arg, None
+    if action in ("on", "enforce", "relax"):
+        if arg is not None and arg not in state.PUSH:
+            return None
+        return action, arg, None
+    # off, status: no second word
+    if arg is not None:
         return None
-    if action == "push" and cadence is None:
-        return None
-    if action in ("off", "status") and cadence is not None:
-        return None
-    return action, cadence
+    return action, None, None
 
 
 def main(argv=None) -> int:
@@ -130,7 +157,7 @@ def main(argv=None) -> int:
     if parsed is None:
         print(USAGE, file=sys.stderr)
         return EX_USAGE
-    action, cadence = parsed
+    action, cadence, suggest = parsed
 
     try:
         session_id = state.validate_session_id(args.session)
@@ -139,7 +166,7 @@ def main(argv=None) -> int:
         return EX_DATAERR
 
     try:
-        record = apply(session_id, action, cadence)
+        record = apply(session_id, action, cadence, suggest)
     except OSError as exc:
         print("mobile mode: could not write %s: %s" % (state.sessions_dir(), exc), file=sys.stderr)
         return EX_IOERR
