@@ -148,6 +148,14 @@ The one change is `AskUserQuestion` in place of the XML round-trip. Happy had to
 invent a tag and parse it because it controls its own client; a plugin doesn't, and
 `AskUserQuestion` already renders as tappable chips with nothing to parse.
 
+One thing worth separating: what Happy calls "suggestions" is *input
+autocomplete* — slash-command typeahead and `@file` fuzzy search (ripgrep +
+Fuse.js, cached client-side), with no model involved. This plugin's `suggest on`
+is a different thing: it asks the main model, in the turn it's already running,
+to end with a few context-aware next steps. That's the efficient place for it —
+the model already holds the whole conversation, so a subagent or a separate
+model call to produce a handful of short prompts would only add cost and latency.
+
 ## Development
 
 ```bash
