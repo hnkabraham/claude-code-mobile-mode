@@ -12,7 +12,9 @@ With it on, a turn ends with something you can tap:
 - **Tappable options.** When the next step is genuinely your call, it goes out as
   `AskUserQuestion`, which renders as chips in Remote Control, instead of as a
   paragraph you'd have to answer by thumb-typing.
-- **A push when you need to look.** One line, leading with what you'd act on.
+- **A push every turn.** One line, leading with the result, so nothing lands
+  silently while you're away from the screen. Claude Code drops it on its own
+  when the terminal is active, so it costs nothing at the desk.
 - **Output written for a phone screen.** Answer first, no preamble.
 
 ## Install
