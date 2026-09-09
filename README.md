@@ -42,7 +42,7 @@ Bash, which Claude Code already uses to run hooks; the launcher also knows that
 
 ```
 /mobile-mode:toggle on        # guidance only — the sane default
-/mobile-mode:toggle enforce   # also let the Stop hook block an optionless turn
+/mobile-mode:toggle enforce   # also let the Stop hook block an optionless or push-skipping turn
 /mobile-mode:toggle relax     # back to guidance only (same as `on`)
 /mobile-mode:toggle off
 /mobile-mode:toggle status
@@ -78,7 +78,7 @@ Two hooks, a launcher, and one small state file per session.
 |---|---|---|
 | `run.sh` | — | finds a working Python 3 and runs one handler under it |
 | `hooks-handlers/inject.py` | `UserPromptSubmit` | returns `hookSpecificOutput.additionalContext` carrying the mobile guidance |
-| `hooks-handlers/enforce.py` | `Stop` | *opt-in*; blocks a turn that ended without `AskUserQuestion`, at most once per turn |
+| `hooks-handlers/enforce.py` | `Stop` | *opt-in*; blocks a turn that ended without `AskUserQuestion`, or (with push cadence `always`) without calling `PushNotification` — at most once per turn |
 | `hooks-handlers/toggle.py` | — | backend for `/mobile-mode:toggle` |
 
 The guidance is attached to each **message**, not to the session. That's the whole
@@ -112,10 +112,14 @@ on the session id means only the session you toggled changes.
 
 `enforce` is off by default, and it should probably stay that way.
 
-The Stop hook can verify that a turn offered options, but it cannot tell *why* one
-didn't. "The model got lazy" and "the work is genuinely finished" look identical
-from the outside. Try the guidance alone first; reach for `enforce` only if the
-prompt proves too loose in practice.
+The Stop hook checks two independent things: did the turn offer anything to
+tap, and — only when the push cadence is `always` — did it call
+`PushNotification`. It cannot tell *why* either one is missing: "the model got
+lazy" and "the work is genuinely finished" look identical from the outside,
+and the same goes for a skipped push. Try the guidance alone first; reach for
+`enforce` only if the prompt proves too loose in practice. The `needed`/`never`
+cadences are never enforced — whether a push was actually needed is a
+judgment call the hook can't verify, so it doesn't try.
 
 It is best-effort by construction: it blocks at most once per turn (Claude Code
 marks the retry with `stop_hook_active`, which always passes), a cancelled or
@@ -132,9 +136,11 @@ Turn-ending options are only worth anything when they represent a real decision.
 A scheduled wakeup or background task that fires *inside the session you
 toggled* is indistinguishable from you. Those turns get the guidance too. The
 guidance tells the model to skip the question on such turns and push only when
-something changed; in `enforce` mode each one costs at most one extra
-"nothing to ask" round-trip. If you run long unattended loops, run them in
-their own session and leave mobile mode off there.
+something changed; in `enforce` mode with the default `always` cadence, a
+turn where nothing changed but the guidance still asked for a push can cost an
+extra round-trip if the model reasonably decided there was nothing worth
+pushing. If you run long unattended loops, run them in their own session and
+leave mobile mode off there, or set the push cadence to `needed`/`never`.
 
 ## Prior art
 

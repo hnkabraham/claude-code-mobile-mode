@@ -32,14 +32,17 @@ PUSH_ITEMS = {
    toward not sending" default. Send it right before you wait on a question,
    or as the last thing before the turn ends. Lead with the thing itself:
    "auth tests failing, 2 of 14" beats "task complete", and for a plain answer
-   put the answer in the line. Do not push again if you are continuing after
-   a stop-hook nudge.""",
+   put the answer in the line. One push per reply is enough: if a stop-hook
+   nudge sends you back only to add a question, do not push a second time for
+   that same reply -- but if the nudge was that you never pushed at all, that
+   is the one push for this reply, send it now.""",
     "needed": """\
 2. PUSH ONE LINE WHEN THEY NEED TO LOOK. If the PushNotification tool is
    available, call it once per turn: right before you wait on a question, or
    when the turn ends with something they would act on. Lead with the thing
-   itself -- "auth tests failing, 2 of 14" beats "task complete". Do not push
-   again if you are continuing after a stop-hook nudge.""",
+   itself -- "auth tests failing, 2 of 14" beats "task complete". One push per
+   reply is enough: if a stop-hook nudge sends you back only to add a
+   question, do not push a second time for that same reply.""",
     "never": """\
 2. DO NOT PUSH. Never call PushNotification in this session, even if the tool
    is offered: the user has turned pushes off for mobile mode and is notified

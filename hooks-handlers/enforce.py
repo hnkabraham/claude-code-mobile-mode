@@ -1,16 +1,31 @@
 #!/usr/bin/env python3
-"""Stop hook: optionally refuse to end a mobile-mode turn that offered no options.
+"""Stop hook: optionally refuse to end a mobile-mode turn that fell short.
 
 OFF BY DEFAULT. Only acts when this session's mode is "enforce"
 (`/mobile-mode:toggle enforce`). The guidance injected by inject.py is usually
 enough; this exists for when it isn't.
 
+Checks two independent things, either of which can block a turn:
+  - did it offer the user anything to tap (AskUserQuestion)?
+  - if the push cadence is "always", did it call PushNotification?
+"needed"/"never" cadence is not enforced here: whether a push was "needed" is
+a judgment call the Stop hook has no way to verify, so nagging about it would
+mostly be wrong. "always" is closer to unambiguous -- it means every turn --
+but it is not a guarantee: a session where PushNotification is not offered at
+all (no Remote Control, push disabled in /config) gets exactly one unwinnable
+nudge per turn, which is why PUSH_REASON explicitly excuses that case rather
+than looping. Nor can a Stop hook ever verify a push sent *before* an
+AskUserQuestion, as the guidance asks for on cadence "always"/"needed" --
+by the time Stop fires, the question has already been asked and answered, so
+this only catches a push missing from the whole turn, not a late one.
+
 Happy could only ask nicely -- it had a system prompt and no way to check the
 result. A Stop hook can actually verify, at the cost of being able to nag about
-a turn that had nothing worth asking. That trade is why this is opt-in, and why
-it is best-effort: blocking happens at most once per turn (Claude Code sets
-`stop_hook_active` on the retry, and we always let that through), and any
-uncertainty about the transcript resolves to "let the turn end".
+a turn that had nothing worth asking (or nothing worth pushing). That trade is
+why this is opt-in, and why it is best-effort: blocking happens at most once
+per turn (Claude Code sets `stop_hook_active` on the retry, and we always let
+that through), and any uncertainty about the transcript resolves to "let the
+turn end".
 """
 
 import json
@@ -20,29 +35,39 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import mobile_mode_state as state  # noqa: E402
 
-REASON = (
+ASK_REASON = (
     "Mobile mode is on and this turn ended without offering the user anything to "
     "tap. If there is a real next step or a decision that is theirs to make, call "
     "AskUserQuestion with those as options now. If the work is genuinely finished "
     "and there is nothing worth asking, say so in one short line and stop -- do "
     "not invent a question."
 )
+REASON = ASK_REASON  # old name, kept for anything still importing it
+
+PUSH_REASON = (
+    "Mobile mode's push cadence is \"always\" and this turn ended without calling "
+    "PushNotification. If that tool is offered in this session, call it now with "
+    "a one-line status before the turn ends -- the user is away from the "
+    "terminal and relies on the push to know a reply happened. If the tool is "
+    "not offered here, there is nothing more to do: say so in one short line "
+    "and stop -- this one nudge is enough, do not keep trying."
+)
 
 
-def offered_options(transcript_path: str):
-    """Did the assistant call AskUserQuestion since the last real user message?
+def _tool_used_since_boundary(transcript_path: str, tool_name: str):
+    """Did the assistant call ``tool_name`` since the last real user message?
 
-    Returns True when a question was asked (and not rejected or cancelled),
-    False when the turn is visible and asked none, and None when it cannot tell
-    -- unreadable, empty, or no user message found at all. None must never
-    block: absence of evidence is not grounds to refuse a stop.
+    Returns True when the call happened (and was not rejected or cancelled),
+    False when the turn is visible and made no such call, and None when it
+    cannot tell -- unreadable, empty, or no user message found at all. None
+    must never block: absence of evidence is not grounds to refuse a stop.
 
     Walks the transcript backwards and stops at the first user message that is
     actual user input. Tool results also arrive with role "user", so those are
     skipped -- treating one as the turn boundary would truncate the window and
     make us miss a tool call that did happen. Tool results are also how we
-    learn a question failed: an `is_error` result for an AskUserQuestion call
-    (cancelled, timed out) means nothing was actually offered.
+    learn a call failed: an `is_error` result for a matching call (rejected,
+    cancelled, timed out) means it did not actually take effect.
     """
     try:
         with open(transcript_path, "r", encoding="utf-8", errors="replace") as fh:
@@ -88,12 +113,22 @@ def offered_options(transcript_path: str):
                 if (
                     isinstance(block, dict)
                     and block.get("type") == "tool_use"
-                    and block.get("name") == "AskUserQuestion"
+                    and block.get("name") == tool_name
                     and block.get("id") not in failed_ids
                 ):
                     return True
 
     return None  # never found a user message: nothing to judge
+
+
+def offered_options(transcript_path: str):
+    """Did the assistant call AskUserQuestion since the last real user message?"""
+    return _tool_used_since_boundary(transcript_path, "AskUserQuestion")
+
+
+def sent_push(transcript_path: str):
+    """Did the assistant call PushNotification since the last real user message?"""
+    return _tool_used_since_boundary(transcript_path, "PushNotification")
 
 
 def main() -> None:
@@ -116,19 +151,32 @@ def main() -> None:
         if record.get("skip_next_stop"):
             # The turn that switched enforcement on (or checked status) has
             # nothing to ask. Consume the pass; the next turn is fair game.
+            # Keep any push/suggest preference -- this is a pass on the check,
+            # not a reset of what the user configured.
             try:
-                state.save(session_id, {"mode": "enforce"})
+                prefs = {k: record[k] for k in ("push", "suggest") if k in record}
+                state.save(session_id, {"mode": "enforce", **prefs})
             except OSError:
                 pass
             print("{}")
             return
 
         transcript = event.get("transcript_path")
-        if not transcript or offered_options(transcript) is not False:
+        if not transcript:
             print("{}")
             return
 
-        print(json.dumps({"decision": "block", "reason": REASON}))
+        reasons = []
+        if offered_options(transcript) is False:
+            reasons.append(ASK_REASON)
+        if state.push_cadence(record) == "always" and sent_push(transcript) is False:
+            reasons.append(PUSH_REASON)
+
+        if not reasons:
+            print("{}")
+            return
+
+        print(json.dumps({"decision": "block", "reason": " ".join(reasons)}))
     except Exception:
         print("{}")
 

@@ -475,9 +475,15 @@ def test_enforce_blocks_a_silent_turn(home, transcripts):
     assert out["decision"] == "block" and "AskUserQuestion" in out["reason"]
 
 
-def test_enforce_lets_a_turn_with_a_question_end(home, transcripts):
+def test_enforce_lets_a_turn_with_a_question_end(home, tmp_path):
+    # The realistic default record `/mobile-mode:toggle enforce` produces has
+    # no explicit "push" key -- this must still enforce the default cadence
+    # ("always"), so the transcript has to comply on both counts, not just ask.
     arm_enforce(SID)
-    r = run_handler("enforce", stdin=stop_event(transcripts["asked"]))
+    t = write_transcript(tmp_path / "t.jsonl", [
+        user_text("q"), assistant(tool_use("AskUserQuestion"), tool_use("PushNotification", "toolu_2")),
+    ])
+    r = run_handler("enforce", stdin=stop_event(t))
     assert r.stdout.strip() == "{}"
 
 
@@ -517,6 +523,106 @@ def test_enforce_ignores_other_sessions(home, transcripts):
 def test_enforce_is_silent_on_bad_stdin(home, stdin):
     r = run_handler("enforce", stdin=stdin)
     assert r.returncode == 0 and r.stdout.strip() == "{}"
+
+
+# --------------------------------------------------------------------------- enforce: push cadence
+
+def test_pushed_in_this_turn_counts(tmp_path):
+    t = write_transcript(tmp_path / "t.jsonl", [
+        user_text("do it"),
+        assistant(text("done"), tool_use("PushNotification")),
+    ])
+    assert enforce.sent_push(t) is True
+
+
+def test_no_push_is_false(tmp_path):
+    t = write_transcript(tmp_path / "t.jsonl", [user_text("do it"), assistant(text("done"))])
+    assert enforce.sent_push(t) is False
+
+
+def test_failed_push_does_not_count(tmp_path):
+    t = write_transcript(tmp_path / "t.jsonl", [
+        user_text("do it"),
+        assistant(tool_use("PushNotification")),
+        user_blocks(tool_result(is_error=True)),
+        assistant(text("ok never mind")),
+    ])
+    assert enforce.sent_push(t) is False
+
+
+def test_ask_and_push_are_independent(tmp_path):
+    # A turn can ask without pushing, or push without asking.
+    asked_only = write_transcript(tmp_path / "asked.jsonl", [
+        user_text("do it"), assistant(tool_use("AskUserQuestion")),
+    ])
+    assert enforce.offered_options(asked_only) is True
+    assert enforce.sent_push(asked_only) is False
+
+    pushed_only = write_transcript(tmp_path / "pushed.jsonl", [
+        user_text("do it"), assistant(tool_use("PushNotification")),
+    ])
+    assert enforce.offered_options(pushed_only) is False
+    assert enforce.sent_push(pushed_only) is True
+
+
+def test_enforce_blocks_a_turn_with_always_cadence_and_no_push(home, transcripts):
+    state.save(SID, {"mode": "enforce", "push": "always"})  # pass already consumed
+    r = run_handler("enforce", stdin=stop_event(transcripts["asked"]))  # asked, but never pushed
+    out = json.loads(r.stdout)
+    assert out["decision"] == "block" and "PushNotification" in out["reason"]
+    assert "AskUserQuestion" not in out["reason"], "it did ask; only the push half should nag"
+
+
+def test_enforce_lets_an_always_cadence_turn_end_when_it_pushed(home, tmp_path):
+    state.save(SID, {"mode": "enforce", "push": "always"})
+    t = write_transcript(tmp_path / "t.jsonl", [
+        user_text("q"), assistant(tool_use("AskUserQuestion"), tool_use("PushNotification", "toolu_2")),
+    ])
+    r = run_handler("enforce", stdin=stop_event(t))
+    assert r.stdout.strip() == "{}"
+
+
+@pytest.mark.parametrize("cadence", ["needed", "never"])
+def test_enforce_does_not_nag_about_push_outside_always_cadence(home, transcripts, cadence):
+    state.save(SID, {"mode": "enforce", "push": cadence})
+    r = run_handler("enforce", stdin=stop_event(transcripts["asked"]))  # asked, never pushed
+    assert r.stdout.strip() == "{}"
+
+
+def test_enforce_reports_both_reasons_when_both_are_missing(home, transcripts):
+    state.save(SID, {"mode": "enforce", "push": "always"})
+    r = run_handler("enforce", stdin=stop_event(transcripts["silent"]))
+    out = json.loads(r.stdout)
+    assert out["decision"] == "block"
+    assert "AskUserQuestion" in out["reason"] and "PushNotification" in out["reason"]
+
+
+def test_enforce_default_cadence_is_always_enforced(home, transcripts):
+    # No "push" key on disk at all -- push_cadence() must still default to "always".
+    state.save(SID, {"mode": "enforce"})
+    r = run_handler("enforce", stdin=stop_event(transcripts["asked"]))
+    out = json.loads(r.stdout)
+    assert out["decision"] == "block" and "PushNotification" in out["reason"]
+
+
+def test_push_reason_excuses_an_unavailable_tool():
+    assert "not offered" in enforce.PUSH_REASON
+    assert "do not keep trying" in enforce.PUSH_REASON
+
+
+def test_push_guidance_disambiguates_the_stop_hook_nudge_wording():
+    for cadence in ("always", "needed"):
+        g = " ".join(inject.guidance(cadence).split())
+        assert "second time for that same reply" in g
+
+
+def test_skip_next_stop_preserves_push_and_suggest_prefs(home):
+    # Regression: consuming the toggle turn's free pass must not silently
+    # reset the cadence/suggest preferences back to their defaults.
+    state.save(SID, {"mode": "enforce", "push": "needed", "suggest": True, "skip_next_stop": True})
+    r = run_handler("enforce", stdin=stop_event(str(Path("nope.jsonl"))))
+    assert r.stdout.strip() == "{}"
+    assert state.load(SID) == {"mode": "enforce", "push": "needed", "suggest": True}
 
 
 # --------------------------------------------------------------------------- launcher

@@ -17,7 +17,7 @@ Two hooks, one launcher, and a per-session state file. Nothing runs unless
 |---|---|---|
 | `run.sh` | — | finds a working Python 3 (`python3`, then `py -3`, then `python`) and runs one handler under it |
 | `hooks-handlers/inject.py` | `UserPromptSubmit` | returns `hookSpecificOutput.additionalContext` with the guidance, per turn |
-| `hooks-handlers/enforce.py` | `Stop` | opt-in; blocks a turn that ended without `AskUserQuestion`, at most once per turn |
+| `hooks-handlers/enforce.py` | `Stop` | opt-in; blocks a turn that ended without `AskUserQuestion`, or (with push cadence `always`) without calling `PushNotification` — at most once per turn |
 | `hooks-handlers/toggle.py` | — | backend for `/mobile-mode:toggle`; writes the session's state file |
 | `hooks-handlers/mobile_mode_state.py` | — | shared: where state lives, validation, atomic writes, pruning |
 
@@ -95,16 +95,22 @@ there anyway.
 **No push on the phone.** The push half is the `PushNotification` tool, which
 Claude Code only offers when Remote Control is active and push is enabled in
 `/config` → Notifications. The guidance says "if the tool is available", so a
-missing push on the desktop is expected, not a fault.
+missing push on the desktop is expected, not a fault. If the tool is available
+and the cadence is `always` but pushes still aren't happening, the model may
+simply not be following the guidance — that's what `enforce` is for: with
+cadence `always` it also blocks a turn that never called `PushNotification`,
+so the model gets a concrete nudge instead of the request silently going
+unheeded.
 
 **Too many questions.** That is the guidance working as written but the model
 reading it too eagerly. Soften item 1 in `GUIDANCE` rather than turning the
 whole thing off.
 
-**Enforce nags a turn that had nothing to ask.** By design it can — the Stop
-hook cannot tell "lazy" from "finished". It blocks at most once per turn and
-the reason it sends tells the model to say "nothing to ask" in one line. If
-that is still too much, `relax`.
+**Enforce nags a turn that had nothing to ask (or nothing worth pushing).** By
+design it can — the Stop hook cannot tell "lazy" from "finished" for either
+check. It blocks at most once per turn and the reason it sends tells the model
+what to do. If that is still too much, `relax`, or drop the push cadence to
+`needed`/`never` to stop that half of the enforcement specifically.
 
 ## What it deliberately does not do
 
@@ -116,8 +122,9 @@ is a different thing. Hence the explicit, per-session switch.
 It cannot tell your own turns apart from a scheduled wakeup or background task
 firing *inside the same session* you toggled. Those turns get the guidance too.
 The guidance tells the model to skip the question on such turns and push only
-if something changed; in `enforce` mode each one costs at most one extra
-"nothing to ask" round-trip.
+if something changed; with the default `always` cadence in `enforce` mode, a
+turn where the model reasonably decided nothing changed can still cost an
+extra "nothing to push" round-trip.
 
 ## Prior art
 

@@ -10,7 +10,7 @@
       "name": "mobile-mode",
       "description": "Phone-driven sessions end each turn with tappable AskUserQuestion options and a push notification, injected per-turn and scoped to the session you toggle it in.",
       "source": "./",
-      "version": "0.4.0",
+      "version": "0.5.0",
       "category": "productivity",
       "tags": [
         "mobile",

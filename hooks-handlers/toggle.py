@@ -9,7 +9,8 @@ Mode transitions are absolute, not relative, so the result of a command never
 depends on what was set before:
 
     on       -> "on"       guidance only (clears enforce if it was set)
-    enforce  -> "enforce"  guidance + the Stop hook may block an optionless turn
+    enforce  -> "enforce"  guidance + the Stop hook may block an optionless turn,
+                           or (push cadence "always") one that skipped the push
     relax    -> "on"       same as `on`; kept for the README's vocabulary
     off      -> "off"      and, if it was on, flags a one-time retraction for
                            the next turn so the model knows to stop
@@ -63,7 +64,7 @@ def describe(session_id: str, record: dict) -> str:
     if mode == "off":
         return "mobile mode: OFF [%s]" % tag
     if mode == "enforce":
-        head = "ON (enforced - the Stop hook may block a turn that offers nothing to tap)"
+        head = "ON (enforced - the Stop hook may block a turn that offers nothing to tap or skips a due push)"
     else:
         head = "ON (guidance only)"
     extras = PUSH_WORDS[state.push_cadence(record)]

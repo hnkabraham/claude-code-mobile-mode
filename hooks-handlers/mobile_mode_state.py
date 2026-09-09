@@ -10,7 +10,9 @@ scheduled loops) that share the same machine and home directory.
 
 Modes:
   "on"       inject the guidance every turn (guidance only)
-  "enforce"  also let the Stop hook block a turn that offered nothing to tap
+  "enforce"  also let the Stop hook block a turn that offered nothing to tap,
+             and -- when push cadence is "always" -- a turn that never called
+             PushNotification
   "off"      nothing injected; a record may linger with retract_pending=True
              so the next turn can tell the model the earlier guidance no
              longer applies
