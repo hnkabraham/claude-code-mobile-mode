@@ -12,6 +12,22 @@ Remote Control prompts by itself — no toggle needed — and sends the push its
 when the turn ends instead of asking the model to remember. Older builds keep the
 per-session toggle described below.
 
+**New in 0.7.0** (function-hook builds):
+
+- **Approval pushes.** When a permission dialog opens during a phone turn, you get
+  "Needs your OK: Bash — rm -rf build/" right away instead of at the end of the turn.
+- **Quick-action buttons** under the latest reply in the Claude mobile app
+  (default: Continue / Simpler / Next?). A tap submits that prompt as you.
+- **Background pushes.** A turn started by a finished background task pushes when
+  it ends, if you used the phone in the last 3 hours.
+- **Long-turn push.** One "Still working (10 min): <last step>" push on a long phone turn.
+- **Quiet hours** (default 23-7): no routine pushes overnight; approval requests and
+  failed turns still push.
+
+Settings (Claude Code's config menu, or `pluginConfigs` → `mobile-mode` in settings):
+`quietHours` (`23-7`, or `off`), `quickActions` (`Label=prompt|Label=prompt`, empty
+hides them), `longTurnMinutes` (`10`, `0` = off).
+
 With it on, a turn ends with something you can tap:
 
 - **Tappable options.** When the next step is genuinely your call, it goes out as
@@ -85,7 +101,7 @@ it back off.
 
 A function-hook module, two shell hooks, a launcher, and one small state file per session.
 
-**`hooks/register.ts` (function hooks, Claude Code builds that have them).** Claude
+**`hooks/register.tsx` (function hooks, Claude Code builds that have them).** Claude
 Code stamps every submitted prompt with its origin; a Remote Control prompt arrives
 as `origin.kind === "bridge"`. On such a prompt the module attaches the guidance
 itself (unless the session's toggle is already on, in which case the shell hook
@@ -122,7 +138,7 @@ quietly lingering.
 
 ## Why a per-session switch instead of detecting your phone
 
-*Updated for 0.6.0:* function hooks **can** detect it — see `register.ts` above.
+*Updated for 0.6.0:* function hooks **can** detect it — see `register.tsx` above.
 What follows still holds for **shell** hooks, which is why the switch remains for
 builds without function hooks.
 

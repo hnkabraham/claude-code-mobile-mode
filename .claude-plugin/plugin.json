@@ -1,7 +1,7 @@
 {
   "$schema": "https://anthropic.com/claude-code/plugin.schema.json",
   "name": "mobile-mode",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "description": "Phone-driven sessions end each turn with tappable AskUserQuestion options and a push notification, injected per-turn and scoped to the session you toggle it in.",
   "keywords": [
     "mobile",
@@ -12,5 +12,26 @@
   "author": {
     "name": "Henok Abraham"
   },
-  "license": "MIT"
+  "license": "MIT",
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "quietHours": {
+      "type": "string",
+      "title": "Quiet hours",
+      "description": "Local hours with no routine pushes, as START-END in 24h (e.g. 23-7), or off. Approval requests and failures still push.",
+      "default": "23-7"
+    },
+    "quickActions": {
+      "type": "string",
+      "title": "Quick actions",
+      "description": "Buttons under the latest reply in the Claude mobile app, as Label=prompt pairs separated by |. Empty hides them.",
+      "default": "Continue=Continue.|Simpler=Explain that more simply, in a few short lines.|Next?=What should we do next? Give me 2-4 options."
+    },
+    "longTurnMinutes": {
+      "type": "string",
+      "title": "Long-turn push (minutes)",
+      "description": "Send one 'still working' push when a phone-driven turn runs this long. 0 turns it off.",
+      "default": "10"
+    }
+  }
 }
