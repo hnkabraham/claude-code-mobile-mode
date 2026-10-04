@@ -1,7 +1,7 @@
 {
   "$schema": "https://anthropic.com/claude-code/plugin.schema.json",
   "name": "mobile-mode",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "description": "Phone-driven sessions end each turn with tappable AskUserQuestion options and a push notification, injected per-turn and scoped to the session you toggle it in.",
   "keywords": [
     "mobile",
@@ -32,6 +32,23 @@
       "title": "Long-turn push (minutes)",
       "description": "Send one 'still working' push when a phone-driven turn runs this long. 0 turns it off.",
       "default": "10"
+    },
+    "suggestions": {
+      "type": "string",
+      "title": "Next-prompt suggestions",
+      "description": "After a turn, a small model proposes 2-3 next prompts: shown as buttons under the reply in the Claude mobile app (phone), also as the prompt box's Tab suggestion in the terminal (always), or off.",
+      "options": [
+        "phone",
+        "always",
+        "off"
+      ],
+      "default": "phone"
+    },
+    "suggestModel": {
+      "type": "string",
+      "title": "Suggestion model",
+      "description": "Model for next-prompt suggestions (alias like haiku, or a full id).",
+      "default": "haiku"
     }
   }
 }

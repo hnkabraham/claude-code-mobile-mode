@@ -1,8 +1,9 @@
 import { test, expect, mock } from 'claude-code/testing'
-import { summarize, parseRecord, decide, isQuiet, parseActions, describeCall } from '../hooks/register'
+import { summarize, parseRecord, decide, isQuiet, parseActions, describeCall, parseSuggestions } from '../hooks/register'
 
 // Quiet hours off so these tests don't depend on the time of day they run.
-const OPTS = { options: { quietHours: 'off', longTurnMinutes: '10' } }
+const OPTS = { options: { quietHours: 'off', longTurnMinutes: '10', suggestions: 'off' } }
+const SUGGEST = { options: { quietHours: 'off', longTurnMinutes: '10', suggestions: 'phone' } }
 
 // Stand-ins for what Claude Code answers beneath the plugins. The test engine
 // has no $.session/$.env/$.fs, so the toggle record reads as "no file" here;
@@ -90,10 +91,40 @@ test('quick-action buttons draw under the latest reply on mobile and submit as a
   await submit($, 'bridge'); await complete($, 'All set.')
   const ui = await $.ui.mount({ plugin: 'mobile-mode', surface: 'mobile', component: 'AssistantMessage', props: { text: 'All set.', isFirstOfReply: true } })
   expect(await ui.find({ type: 'Button', text: 'Continue' })).toBeDefined()
-  await ui.press({ key: 'qa-Continue' })
+  await ui.press({ key: 'qa-0' })
   expect(h.submitted.at(-1)).toEqual({ text: 'Continue.', origin: 'plugin' })
   const term = await $.ui.mount({ plugin: 'mobile-mode', surface: 'terminal', component: 'AssistantMessage', props: { text: 'All set.', isFirstOfReply: true } })
   expect(await term.find({ type: 'Button' })).toBeUndefined()
+})
+
+test('Haiku suggestions replace the fixed buttons under a phone reply', SUGGEST, async ($, on) => {
+  const asked: any[] = []
+  on('model.complete', ($2: any, e: any) => {
+    asked.push(e)
+    return { value: { isAnswered: true, text: '[{"label":"Run tests","prompt":"Run the test suite"},{"label":"Open PR","prompt":"Open a PR for this"}]', usage: {} } }
+  })
+  const h = harness(on)
+  await submit($, 'bridge'); await complete($, 'Refactor done.')
+  expect(asked[0]?.model).toBe('haiku')
+  expect(String(asked[0]?.prompt)).toContain('Refactor done.')
+  const ui = await $.ui.mount({ plugin: 'mobile-mode', surface: 'mobile', component: 'AssistantMessage', props: { text: 'Refactor done.', isFirstOfReply: true } })
+  expect(await ui.find({ type: 'Button', text: 'Run tests' })).toBeDefined()
+  expect(await ui.find({ type: 'Button', text: 'Continue' })).toBeUndefined()
+  await ui.press({ key: 'qa-1' })
+  expect(h.submitted.at(-1)).toEqual({ text: 'Open a PR for this', origin: 'plugin' })
+  expect(h.pushed).toEqual(['Refactor done.'])
+})
+
+test('a failed suggestion call falls back to the fixed buttons; terminal turns ask nothing', SUGGEST, async ($, on) => {
+  let calls = 0
+  on('model.complete', () => { calls++; return { value: { isAnswered: false, reason: 'api-error', status: 529, error: 'overloaded', usage: {} } } })
+  harness(on)
+  await submit($, 'composer'); await complete($, 'desk answer')
+  expect(calls).toBe(0)
+  await submit($, 'bridge'); await complete($, 'All set.')
+  expect(calls).toBe(1)
+  const ui = await $.ui.mount({ plugin: 'mobile-mode', surface: 'mobile', component: 'AssistantMessage', props: { text: 'All set.', isFirstOfReply: true } })
+  expect(await ui.find({ type: 'Button', text: 'Continue' })).toBeDefined()
 })
 
 test('decide()', async () => {
@@ -115,6 +146,8 @@ test('helpers', async () => {
   expect(isQuiet('off', 3)).toBe(false)
   expect(parseActions('A=do a|bad|B=do b')).toEqual([{ label: 'A', prompt: 'do a' }, { label: 'B', prompt: 'do b' }])
   expect(describeCall('Edit', { file_path: '/x/y.ts' })).toBe('Needs your OK: Edit — /x/y.ts')
+  expect(parseSuggestions('Sure! [{"label":"A","prompt":"do a"},{"label":"","prompt":"x"},{"nope":1}]')).toEqual([{ label: 'A', prompt: 'do a' }])
+  expect(parseSuggestions('no json here')).toEqual([])
   expect(summarize('')).toBe('Claude finished — tap to see the reply.')
   expect(summarize('x'.repeat(300)).length).toBe(180)
 })

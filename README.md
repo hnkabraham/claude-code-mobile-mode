@@ -24,9 +24,19 @@ per-session toggle described below.
 - **Quiet hours** (default 23-7): no routine pushes overnight; approval requests and
   failed turns still push.
 
+**New in 0.8.0 — next-prompt suggestions.** After a phone turn, a small model
+(Haiku by default, through your session's own login) reads your last message and
+the reply and proposes 2-3 likely next prompts. They show as buttons under the reply
+in the mobile app, in place of the fixed quick actions, until the next turn; if the
+call fails, the fixed buttons come back. Happy got options by asking the main model
+to end each reply with an `<options>` block; a separate small call keeps the reply
+clean and adds nothing to the main turn. `suggestions: always` also puts the first
+one in the terminal prompt box as the Tab suggestion.
+
 Settings (Claude Code's config menu, or `pluginConfigs` → `mobile-mode` in settings):
 `quietHours` (`23-7`, or `off`), `quickActions` (`Label=prompt|Label=prompt`, empty
-hides them), `longTurnMinutes` (`10`, `0` = off).
+hides them), `longTurnMinutes` (`10`, `0` = off), `suggestions` (`phone` | `always` |
+`off`), `suggestModel` (`haiku`).
 
 With it on, a turn ends with something you can tap:
 

@@ -16,6 +16,12 @@ import type { EngineInterface, Register } from 'claude-code'
 //     Claude mobile app; a press submits that prompt as the user.
 //   * Background pushes (0.7.0). A turn started by a finished background task
 //     while the phone was recently in use pushes when it ends.
+//   * Next-prompt suggestions (0.8.0). After a phone turn a small model (Haiku
+//     by default, through the session's own credentials) reads the last
+//     exchange and proposes 2-3 next prompts; they replace the fixed quick
+//     actions under the reply until the next turn. Happy (slopus/happy) got
+//     options by having the main model emit an <options> block; a separate
+//     small call keeps the reply clean and costs the main turn nothing.
 //   * Long turns + quiet hours (0.7.0). One "still working" push when a phone
 //     turn runs long; no routine pushes during quiet hours (approval requests
 //     and failed turns still push).
@@ -29,7 +35,8 @@ import type { EngineInterface, Register } from 'claude-code'
 
 type Push = 'always' | 'needed' | 'never'
 type Rec = { mode: 'on' | 'enforce' | 'off'; push: Push; suggest: boolean; exists: boolean }
-type Options = { quietHours?: string; quickActions?: string; longTurnMinutes?: string }
+type Options = { quietHours?: string; quickActions?: string; longTurnMinutes?: string; suggestions?: string; suggestModel?: string }
+type Action = { label: string; prompt: string }
 
 const MAX = 180
 const SESSION_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{7,127}$/
@@ -154,6 +161,46 @@ export function describeCall(tool: string, input: unknown): string {
   return clip(`Needs your OK: ${tool}${detail ? ` — ${detail.replace(/\s+/g, ' ')}` : ''}`)
 }
 
+const SUGGEST_SYSTEM = `You suggest what a user might send next to their AI coding/assistant agent.
+Given their last message and the agent's reply, propose 2 or 3 likely next messages, written as
+the user would type them: specific to this conversation, short, and genuinely different from each
+other (e.g. a follow-up question, the obvious next action, a check or variation). Never suggest
+something the reply already did, and never just "thanks" or "continue" unless the reply clearly
+paused mid-task. Output ONLY a JSON array: [{"label": "<2-4 words>", "prompt": "<the full message>"}]`
+
+export function parseSuggestions(text: string): Action[] {
+  try {
+    const i = text.indexOf('[')
+    const j = text.lastIndexOf(']')
+    if (i < 0 || j <= i) return []
+    const arr = JSON.parse(text.slice(i, j + 1))
+    if (!Array.isArray(arr)) return []
+    return arr
+      .filter(a => a && typeof a.label === 'string' && typeof a.prompt === 'string')
+      .map(a => ({ label: String(a.label).trim().slice(0, 24), prompt: String(a.prompt).trim().slice(0, 500) }))
+      .filter(a => a.label && a.prompt)
+      .slice(0, 3)
+  } catch {
+    return []
+  }
+}
+
+// One small-model call over the last exchange; [] on any failure.
+async function suggestNext($: EngineInterface, model: string, userText: string, answer: string): Promise<Action[]> {
+  try {
+    const r = await $.model.complete({
+      model,
+      system: SUGGEST_SYSTEM,
+      prompt: `User's last message:\n${userText.slice(0, 2000)}\n\nAgent's reply:\n${answer.slice(-6000)}`,
+      maxTokens: 400,
+      timeoutMs: 20_000,
+    })
+    return r.isAnswered ? parseSuggestions(r.text) : []
+  } catch {
+    return []
+  }
+}
+
 async function readRecord($: EngineInterface): Promise<Rec> {
   try {
     const id = await $.session.id()
@@ -187,6 +234,8 @@ export const register: Register = (on, options) => {
   const opts = (options ?? {}) as Options
   const actions = parseActions(opts.quickActions)
   const longMs = Math.max(0, Number(opts.longTurnMinutes ?? '10') || 0) * 60_000
+  const suggestMode = ['phone', 'always', 'off'].includes(opts.suggestions ?? '') ? opts.suggestions : 'phone'
+  const suggestModel = (opts.suggestModel ?? '').trim() || 'haiku'
 
   let mobileTurn = false
   let cadence: Push = 'always'
@@ -196,6 +245,7 @@ export const register: Register = (on, options) => {
   let quickActionPending = false
   let lastTool = ''
   let longTimer: { cancel: () => void } | undefined
+  let lastUserText = ''
 
   const quietNow = () => isQuiet(opts.quietHours ?? '23-7', new Date().getHours())
 
@@ -206,6 +256,7 @@ export const register: Register = (on, options) => {
       mobileTurn = false
       return next(e)
     }
+    lastUserText = e.text
     let origin: string = e.origin.kind
     if (origin === 'plugin' && quickActionPending) origin = 'quick-action'
     quickActionPending = false
@@ -258,13 +309,25 @@ export const register: Register = (on, options) => {
     if (e.agentId !== undefined) return r
     longTimer?.cancel()
     longTimer = undefined
-    if (!mobileTurn) return r
-    if (actions.length > 0 && e.answer.trim()) await update($, last, () => ({ answer: e.answer }))
-    const failed = e.reason === 'error' || e.reason === 'refusal'
-    const due = (cadence === 'always' && !pushedThisTurn) || (failed && cadence !== 'never')
-    if (due && !e.isAborted && (!quietNow() || failed)) {
-      pushedThisTurn = true
-      await selfPush($, failed ? clip(`Turn failed (${e.reason}): ${summarize(e.answer)}`) : summarize(e.answer))
+    const wantSuggest = !e.isAborted && e.answer.trim() !== '' &&
+      (suggestMode === 'always' || (suggestMode === 'phone' && mobileTurn))
+    if (mobileTurn) {
+      if (actions.length > 0 || wantSuggest) await update($, last, () => ({ answer: e.answer }))
+      const failed = e.reason === 'error' || e.reason === 'refusal'
+      const due = (cadence === 'always' && !pushedThisTurn) || (failed && cadence !== 'never')
+      if (due && !e.isAborted && (!quietNow() || failed)) {
+        pushedThisTurn = true
+        await selfPush($, failed ? clip(`Turn failed (${e.reason}): ${summarize(e.answer)}`) : summarize(e.answer))
+      }
+    }
+    if (wantSuggest && e.reason === 'answer') {
+      // After the push, so the suggestion call never delays it.
+      const answer = e.answer
+      const suggestions = await suggestNext($, suggestModel, lastUserText, answer)
+      if (suggestions.length > 0) {
+        await update($, last, cur => (cur && cur.answer === answer ? { ...cur, suggestions } : cur))
+        if (suggestMode === 'always') void $.prompt.suggest({ text: suggestions[0]!.prompt })
+      }
     }
     return r
   })
@@ -272,18 +335,20 @@ export const register: Register = (on, options) => {
   // Quick-action buttons under the latest reply, in the Claude mobile app only.
   on('ui.render', { component: 'AssistantMessage' }, async ($, e, next) => {
     const drawn = await next(e)
-    if (e.surface !== 'mobile' || actions.length === 0) return drawn
+    if (e.surface !== 'mobile') return drawn
     const latest = await read($, last)
     const text = e.props.text.trim()
     if (!latest || !text || !latest.answer.trimEnd().endsWith(text)) return drawn
+    const buttons: Action[] = latest.suggestions?.length ? latest.suggestions : actions
+    if (buttons.length === 0) return drawn
     const { Box, Button } = $.ui.resolve(e)
     return (
       <Box flexDirection="column">
         {drawn}
         <Box flexDirection="row" gap={1}>
-          {actions.map(a => (
+          {buttons.map((a, i) => (
             <Button
-              key={`qa-${a.label}`}
+              key={`qa-${i}`}
               label={a.label}
               onPress={async () => {
                 await update($, last, () => null) // one tap; the row returns with the next reply
