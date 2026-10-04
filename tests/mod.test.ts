@@ -1,5 +1,5 @@
 import { test, expect, mock } from 'claude-code/testing'
-import { summarize, parseRecord, decide, isQuiet, parseActions, describeCall, parseSuggestions } from '../hooks/register'
+import { summarize, parseRecord, decide, isQuiet, parseActions, describeCall, parseSuggestions, endsWithQuestion } from '../hooks/register'
 
 // Quiet hours off so these tests don't depend on the time of day they run.
 const OPTS = { options: { quietHours: 'off', longTurnMinutes: '10', suggestions: 'off' } }
@@ -101,7 +101,7 @@ test('Haiku suggestions replace the fixed buttons under a phone reply', SUGGEST,
   const asked: any[] = []
   on('model.complete', ($2: any, e: any) => {
     asked.push(e)
-    return { value: { isAnswered: true, text: '[{"label":"Run tests","prompt":"Run the test suite"},{"label":"Open PR","prompt":"Open a PR for this"}]', usage: {} } }
+    return { value: { isAnswered: true, text: '[{"label":"Run tests","prompt":"Run the test suite"},{"label":"Open PR","prompt":"Open a PR for this"}]', usage: {} } } as never
   })
   const h = harness(on)
   await submit($, 'bridge'); await complete($, 'Refactor done.')
@@ -117,7 +117,7 @@ test('Haiku suggestions replace the fixed buttons under a phone reply', SUGGEST,
 
 test('a failed suggestion call falls back to the fixed buttons; terminal turns ask nothing', SUGGEST, async ($, on) => {
   let calls = 0
-  on('model.complete', () => { calls++; return { value: { isAnswered: false, reason: 'api-error', status: 529, error: 'overloaded', usage: {} } } })
+  on('model.complete', () => { calls++; return { value: { isAnswered: false, reason: 'api-error', status: 529, error: 'overloaded', usage: {} } } as never })
   harness(on)
   await submit($, 'composer'); await complete($, 'desk answer')
   expect(calls).toBe(0)
@@ -125,6 +125,30 @@ test('a failed suggestion call falls back to the fixed buttons; terminal turns a
   expect(calls).toBe(1)
   const ui = await $.ui.mount({ plugin: 'mobile-mode', surface: 'mobile', component: 'AssistantMessage', props: { text: 'All set.', isFirstOfReply: true } })
   expect(await ui.find({ type: 'Button', text: 'Continue' })).toBeDefined()
+})
+
+test('no suggestions or buttons when Claude ends with a question', SUGGEST, async ($, on) => {
+  let calls = 0
+  on('model.complete', () => { calls++; return { value: { isAnswered: true, text: '[{"label":"X","prompt":"x"}]', usage: {} } } as never })
+  on('tool.call', { tool: 'AskUserQuestion' }, () => ({ result: {} }))
+  harness(on)
+  await submit($, 'bridge'); await complete($, 'Built it. Want me to push it to main?')
+  const ui = await $.ui.mount({ plugin: 'mobile-mode', surface: 'mobile', component: 'AssistantMessage', props: { text: 'Built it. Want me to push it to main?', isFirstOfReply: true } })
+  expect(await ui.find({ type: 'Button' })).toBeUndefined()
+  await submit($, 'bridge')
+  await $.tool.call({ tool: 'AskUserQuestion', questions: [] } as never)
+  await complete($, 'Pick one above.')
+  const ui2 = await $.ui.mount({ plugin: 'mobile-mode', surface: 'mobile', component: 'AssistantMessage', props: { text: 'Pick one above.', isFirstOfReply: true } })
+  expect(await ui2.find({ type: 'Button' })).toBeUndefined()
+  expect(calls).toBe(0)
+})
+
+test('old buttons disappear when the next phone turn starts', OPTS, async ($, on) => {
+  harness(on)
+  await submit($, 'bridge'); await complete($, 'All set.')
+  await submit($, 'bridge')
+  const ui = await $.ui.mount({ plugin: 'mobile-mode', surface: 'mobile', component: 'AssistantMessage', props: { text: 'All set.', isFirstOfReply: true } })
+  expect(await ui.find({ type: 'Button' })).toBeUndefined()
 })
 
 test('decide()', async () => {
@@ -148,6 +172,10 @@ test('helpers', async () => {
   expect(describeCall('Edit', { file_path: '/x/y.ts' })).toBe('Needs your OK: Edit — /x/y.ts')
   expect(parseSuggestions('Sure! [{"label":"A","prompt":"do a"},{"label":"","prompt":"x"},{"nope":1}]')).toEqual([{ label: 'A', prompt: 'do a' }])
   expect(parseSuggestions('no json here')).toEqual([])
+  expect(endsWithQuestion('Done.\n\n**Want me to push it?**')).toBe(true)
+  expect(endsWithQuestion('Is it fixed? Yes — all 9 tests pass.')).toBe(false)
+  expect(endsWithQuestion('Shall I continue? (yes/no)')).toBe(true)
+  expect(endsWithQuestion('Done (see above).')).toBe(false)
   expect(summarize('')).toBe('Claude finished — tap to see the reply.')
   expect(summarize('x'.repeat(300)).length).toBe(180)
 })

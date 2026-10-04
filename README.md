@@ -30,7 +30,10 @@ the reply and proposes 2-3 likely next prompts. They show as buttons under the r
 in the mobile app, in place of the fixed quick actions, until the next turn; if the
 call fails, the fixed buttons come back. Happy got options by asking the main model
 to end each reply with an `<options>` block; a separate small call keeps the reply
-clean and adds nothing to the main turn. `suggestions: always` also puts the first
+clean and adds nothing to the main turn. Suggestions and quick actions stay hidden when
+Claude's reply ends with a question or the turn ended on its own AskUserQuestion
+options (your answer is the next step), and the previous reply's buttons disappear
+as soon as a new turn starts. `suggestions: always` also puts the first
 one in the terminal prompt box as the Tab suggestion.
 
 Settings (Claude Code's config menu, or `pluginConfigs` → `mobile-mode` in settings):

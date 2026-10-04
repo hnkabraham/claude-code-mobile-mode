@@ -136,6 +136,15 @@ export function parseActions(spec: string | undefined): { label: string; prompt:
     .slice(0, 4)
 }
 
+// True when the reply ends by asking the user something: then their answer is the
+// next prompt, and suggestions or quick actions would compete with it.
+export function endsWithQuestion(answer: string): boolean {
+  const lines = answer.split('\n').map(l => l.replace(/[`*_>#]/g, '').trim()).filter(Boolean)
+  const tail = lines[lines.length - 1] ?? ''
+  // "...push it?"  "...push it?)"  "Shall I continue? (yes/no)"
+  return /\?["')\s]*(\([^()]*\))?["')\s]*$/.test(tail)
+}
+
 export function summarize(answer: string): string {
   const line = answer
     .split('\n')
@@ -246,6 +255,7 @@ export const register: Register = (on, options) => {
   let lastTool = ''
   let longTimer: { cancel: () => void } | undefined
   let lastUserText = ''
+  let lastToolWasQuestion = false // the turn's latest tool call was AskUserQuestion
 
   const quietNow = () => isQuiet(opts.quietHours ?? '23-7', new Date().getHours())
 
@@ -270,9 +280,12 @@ export const register: Register = (on, options) => {
     return next(e)
   })
 
-  on('turn.start', ($, e, next) => {
+  on('turn.start', async ($, e, next) => {
     pushedThisTurn = false
     lastTool = ''
+    lastToolWasQuestion = false
+    // The previous reply's buttons go away while Claude works on the next one.
+    if (mobileTurn) await update($, last, () => null)
     longTimer?.cancel()
     longTimer = undefined
     if (mobileTurn && cadence !== 'never' && longMs > 0) {
@@ -286,6 +299,7 @@ export const register: Register = (on, options) => {
   })
 
   on('tool.call', async ($, e, next) => {
+    lastToolWasQuestion = e.tool === 'AskUserQuestion'
     if (e.tool !== 'PushNotification') {
       const i = e as unknown as Record<string, unknown>
       const d = typeof i.description === 'string' ? i.description : typeof i.command === 'string' ? i.command : ''
@@ -309,10 +323,13 @@ export const register: Register = (on, options) => {
     if (e.agentId !== undefined) return r
     longTimer?.cancel()
     longTimer = undefined
-    const wantSuggest = !e.isAborted && e.answer.trim() !== '' &&
+    // Claude asked something (a question in the reply, or it ended on its own
+    // AskUserQuestion options): no suggestions or quick actions this turn.
+    const asked = endsWithQuestion(e.answer) || lastToolWasQuestion
+    const wantSuggest = !e.isAborted && !asked && e.answer.trim() !== '' &&
       (suggestMode === 'always' || (suggestMode === 'phone' && mobileTurn))
     if (mobileTurn) {
-      if (actions.length > 0 || wantSuggest) await update($, last, () => ({ answer: e.answer }))
+      if (!asked && (actions.length > 0 || wantSuggest)) await update($, last, () => ({ answer: e.answer }))
       const failed = e.reason === 'error' || e.reason === 'refusal'
       const due = (cadence === 'always' && !pushedThisTurn) || (failed && cadence !== 'never')
       if (due && !e.isAborted && (!quietNow() || failed)) {
