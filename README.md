@@ -3,9 +3,14 @@
 A Claude Code plugin for people who drive sessions from their phone.
 
 When you're on mobile, reading is cheap, typing is expensive, and tapping is free.
-Claude Code doesn't know that. `mobile-mode` tells it — per turn, behind a
-per-session switch, so nothing changes when you're back at the terminal and
+Claude Code doesn't know that. `mobile-mode` tells it — per turn, only on turns
+that came from your phone, so nothing changes when you're back at the terminal and
 nothing changes in the *other* sessions running on the same machine.
+
+**New in 0.6.0:** on Claude Code builds with function hooks ("mods"), it detects
+Remote Control prompts by itself — no toggle needed — and sends the push itself
+when the turn ends instead of asking the model to remember. Older builds keep the
+per-session toggle described below.
 
 With it on, a turn ends with something you can tap:
 
@@ -21,7 +26,7 @@ With it on, a turn ends with something you can tap:
 ## Install
 
 ```bash
-/plugin marketplace add holystreetballer/claude-code-mobile-mode
+/plugin marketplace add hnkabraham/claude-code-mobile-mode
 /plugin install mobile-mode
 ```
 
@@ -29,7 +34,7 @@ Or clone straight into your skills directory, which loads it as a plugin
 (hooks included) on the next session:
 
 ```bash
-git clone https://github.com/holystreetballer/claude-code-mobile-mode ~/.claude/skills/mobile-mode
+git clone https://github.com/hnkabraham/claude-code-mobile-mode ~/.claude/skills/mobile-mode
 ```
 
 Requires Claude Code 2.1.157 or newer, a Python 3.8+ somewhere on `PATH`
@@ -52,7 +57,13 @@ Bash, which Claude Code already uses to run hooks; the launcher also knows that
 /mobile-mode:toggle suggest on   # end each turn with tappable next-step prompts
 ```
 
-Flip it on when you pick up your phone, off when you sit back down. It applies
+**With function hooks (0.6.0+), you usually don't need the toggle at all:** a
+prompt sent from the Remote Control app turns mobile mode on for that turn, and a
+prompt typed at the terminal doesn't. The toggle still matters: `off` in a session
+opts that session out of the automatic mode, and the push cadence and `suggest`
+preferences below apply either way.
+
+On older builds, flip it on when you pick up your phone, off when you sit back down. It applies
 to **the session you run it in** and no other. Hooks read the switch at fire
 time, so it takes effect on the next turn — no restart. Transitions are
 absolute: `on` always means guidance-only, even if `enforce` was set before.
@@ -72,7 +83,21 @@ it back off.
 
 ## How it works
 
-Two hooks, a launcher, and one small state file per session.
+A function-hook module, two shell hooks, a launcher, and one small state file per session.
+
+**`hooks/register.ts` (function hooks, Claude Code builds that have them).** Claude
+Code stamps every submitted prompt with its origin; a Remote Control prompt arrives
+as `origin.kind === "bridge"`. On such a prompt the module attaches the guidance
+itself (unless the session's toggle is already on, in which case the shell hook
+does), and when the turn ends it calls `PushNotification` with the first line of
+the answer — if the push cadence is `always` and the model didn't already push.
+Terminal prompts, scheduled tasks and background notifications are never `bridge`,
+so unattended sessions are untouched without any switch. An explicit `off` in a
+session's state file keeps the module out of that session. Function hooks are an
+early-access Claude Code surface; on builds without them the module isn't loaded
+and the shell hooks below work exactly as before.
+
+**Shell hooks (every build).**
 
 | | Event | Job |
 |---|---|---|
@@ -97,10 +122,14 @@ quietly lingering.
 
 ## Why a per-session switch instead of detecting your phone
 
-Because it can't be detected. A hook receives no indication of where a prompt came
-from: there's no origin field in its stdin JSON, and no environment marker for a
-local session being driven by Remote Control (`CLAUDE_CODE_REMOTE*` refers to cloud
-sessions, which is a different thing).
+*Updated for 0.6.0:* function hooks **can** detect it — see `register.ts` above.
+What follows still holds for **shell** hooks, which is why the switch remains for
+builds without function hooks.
+
+A shell hook receives no indication of where a prompt came from: there's no origin
+field in its stdin JSON, and no environment marker for a local session being driven
+by Remote Control (`CLAUDE_CODE_REMOTE*` refers to cloud sessions, which is a
+different thing).
 
 And a machine-wide switch would be worse than nothing. The moment you flipped it
 on from your phone, every unattended session on that box — a chat-channel bridge,
@@ -165,7 +194,9 @@ model call to produce a handful of short prompts would only add cost and latency
 ## Development
 
 ```bash
-python -m pytest -q
+python -m pytest -q          # shell hooks
+claude plugin test .         # function-hook module (tests/mod.test.ts)
+claude plugin validate .claude-plugin/plugin.json
 ```
 
 The suite runs the handlers the way Claude Code does — through `sh run.sh` and
